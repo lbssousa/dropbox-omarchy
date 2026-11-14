@@ -109,6 +109,19 @@ function usageText(usedBytes, quotaBytes, quotaKnown, tr, fmt) {
   return formatBytes(usedBytes, fmt)
 }
 
+// Caption under the storage line: says when the quota is only the plan's base
+// allocation (which misses bonus space) and offers to connect the account.
+function quotaNote(quotaSource, apiConfigured, connected, error, tr) {
+  var t = translator(tr)
+  if (quotaSource === "api") {
+    return error ? t("dropbox.quotaStale", "Account quota (last reading: %1)").replace("%1", error) : ""
+  }
+  if (!apiConfigured) return quotaSource === "plan" ? t("dropbox.quotaPlanEstimate", "Plan estimate — set a Dropbox app key in the widget settings to read the real quota") : ""
+  if (connected) return error ? t("dropbox.quotaApiError", "Couldn't read account quota: %1").replace("%1", error) : ""
+  var connect = t("dropbox.quotaConnect", "Connect account to read the real quota")
+  return error ? error + " — " + connect : connect
+}
+
 function relativeTime(timestampSec, nowMs, tr, fmt) {
   var t = translator(tr)
   var f = formatter(fmt)
@@ -145,6 +158,7 @@ if (typeof module !== "undefined") {
     formatBytes: formatBytes,
     formatPercent: formatPercent,
     usageText: usageText,
+    quotaNote: quotaNote,
     relativeTime: relativeTime,
     fileMeta: fileMeta
   }

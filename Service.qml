@@ -28,13 +28,21 @@ Item {
   property double quotaBytes: 0
   property double usagePercent: 0
   property bool quotaKnown: false
+  // "api" when the quota came from the Dropbox API, "plan" for the per-plan estimate.
+  property string quotaSource: ""
+  property bool spaceConnected: false
+  property string spaceError: ""
+  property bool spaceAuthorizing: authProcess.running
   property var files: []
   property string actionStatus: ""
   property string lastError: ""
 
   readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 60, 10, 3600)
-  readonly property bool busy: statusProcess.running || loginProcess.running || controlProcess.running
-  readonly property string helperPath: (omarchyPath || "") + "/shell/plugins/panels/dropbox/status.py"
+  readonly property string appKey: String(setting("appKey", "") || "").trim()
+  readonly property bool spaceApiConfigured: appKey !== ""
+  readonly property bool busy: statusProcess.running || loginProcess.running || controlProcess.running || authProcess.running
+  // This clone's own helper, not the built-in one under OMARCHY_PATH.
+  readonly property string helperPath: decodeURIComponent(Qt.resolvedUrl("status.py").toString().replace(/^file:\/\//, ""))
 
   property string _statusOutput: ""
   property string _statusError: ""
@@ -43,6 +51,10 @@ Item {
   property bool _loginUrlOpened: false
   property string _controlOutput: ""
   property string _controlError: ""
+  property string _authOutput: ""
+  property bool _authUrlOpened: false
+
+  onAppKeyChanged: delayedRefresh.restart()
 
   function setting(name, fallback) {
     var value = settings ? settings[name] : undefined
@@ -58,11 +70,11 @@ Item {
   }
 
   function refresh() {
-    if (statusProcess.running || helperPath === "/shell/plugins/panels/dropbox/status.py") return
+    if (statusProcess.running || helperPath === "") return
     _statusOutput = ""
     _statusError = ""
     refreshing = true
-    statusProcess.command = ["python3", helperPath, "25"]
+    statusProcess.command = ["python3", helperPath, "25", "--app-key", appKey]
     statusProcess.running = true
   }
 
@@ -84,6 +96,9 @@ Item {
     quotaBytes = Number(parsed.quotaBytes || 0)
     usagePercent = Number(parsed.usagePercent || 0)
     quotaKnown = parsed.quotaKnown === true
+    quotaSource = String(parsed.quotaSource || "")
+    spaceConnected = parsed.spaceConnected === true
+    spaceError = String(parsed.spaceError || "")
     files = parsed.files || []
     lastError = ""
   }
@@ -101,6 +116,39 @@ Item {
     actionStatus = I18n.t("dropbox.startingLogin")
     loginProcess.command = ["dropbox-cli", "start"]
     loginProcess.running = true
+  }
+
+  // Browser OAuth flow that lets status.py read the real account quota.
+  function connectSpace() {
+    if (!spaceApiConfigured) {
+      actionStatus = I18n.t("dropbox.spaceNeedsAppKey", "Set your Dropbox app key in the widget settings first")
+      actionStatusTimer.restart()
+      return
+    }
+    if (authProcess.running) return
+    _authOutput = ""
+    _authUrlOpened = false
+    actionStatus = I18n.t("dropbox.spaceConnecting", "Waiting for Dropbox authorization in the browser…")
+    authProcess.command = ["python3", helperPath, "--authorize", "--app-key", appKey]
+    authProcess.running = true
+  }
+
+  function disconnectSpace() {
+    if (authProcess.running) authProcess.running = false
+    Quickshell.execDetached(["python3", helperPath, "--disconnect"])
+    spaceConnected = false
+    delayedRefresh.restart()
+  }
+
+  function handleAuthOutput(data) {
+    var text = String(data || "")
+    _authOutput += text + "\n"
+    if (_authUrlOpened) return
+    var match = text.match(/https:\/\/\S+/)
+    if (match && match[0]) {
+      _authUrlOpened = true
+      Qt.openUrlExternally(match[0])
+    }
   }
 
   function pause() {
@@ -248,6 +296,26 @@ Item {
       } else if (!opened) {
         root.actionStatus = ""
         root.lastError = ""
+      }
+      delayedRefresh.restart()
+    }
+  }
+
+  Process {
+    id: authProcess
+    running: false
+    command: []
+    stdout: SplitParser { onRead: function(data) { root.handleAuthOutput(data) } }
+    stderr: SplitParser { onRead: function(data) { root._authOutput += String(data || "") + "\n" } }
+    onExited: function(exitCode) {
+      if (exitCode === 0) {
+        root.actionStatus = I18n.t("dropbox.spaceConnected", "Dropbox account connected")
+        actionStatusTimer.restart()
+        root.lastError = ""
+      } else {
+        var lines = String(root._authOutput || "").trim().split("\n")
+        root.actionStatus = ""
+        root.lastError = root.elideStatus(lines[lines.length - 1] || I18n.t("dropbox.commandFailed"))
       }
       delayedRefresh.restart()
     }

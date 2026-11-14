@@ -6,7 +6,11 @@ import sys
 import heapq
 from pathlib import Path
 
+import dropbox_api
 
+
+# Fallback when the account is not connected to the Dropbox API: the base
+# allocation of each plan, which misses referral and promo bonus space.
 PLAN_QUOTAS = {
   "basic": 2_000_000_000,
   "plus": 2_000_000_000_000,
@@ -89,11 +93,56 @@ def scan_dropbox(path, limit):
   return total, rows
 
 
+def account_space(app_key):
+  """Quota fields from the Dropbox API, or {} when it cannot answer."""
+  if not app_key:
+    return {"spaceConnected": False, "spaceError": ""}
+  try:
+    reading = dropbox_api.space_usage(app_key)
+  except dropbox_api.NotConnected as error:
+    message = str(error)
+    return {"spaceConnected": False, "spaceError": "" if message == "not connected" else message}
+  except dropbox_api.ApiError as error:
+    return {"spaceConnected": True, "spaceError": str(error)}
+  return {
+    "spaceConnected": True,
+    "spaceError": reading.get("error", ""),
+    "used": int(reading.get("used") or 0),
+    "allocated": int(reading.get("allocated") or 0),
+  }
+
+
+def run_authorize(app_key):
+  if not app_key:
+    print("Set the Dropbox app key in the widget settings first", file=sys.stderr)
+    return 2
+  try:
+    dropbox_api.authorize(app_key, emit=lambda url: print(url, flush=True))
+  except dropbox_api.ApiError as error:
+    print(f"Dropbox authorization failed: {error}", file=sys.stderr)
+    return 1
+  print("connected", flush=True)
+  return 0
+
+
 def main():
+  args = sys.argv[1:]
+  app_key = os.environ.get("DROPBOX_APP_KEY", "").strip()
+  if "--app-key" in args:
+    index = args.index("--app-key")
+    app_key = (args[index + 1] if index + 1 < len(args) else "").strip()
+    del args[index:index + 2]
+  if "--authorize" in args:
+    sys.exit(run_authorize(app_key))
+  if "--disconnect" in args:
+    dropbox_api.clear_tokens()
+    print("disconnected")
+    return
+
   limit = 25
-  if len(sys.argv) > 1:
+  if args:
     try:
-      limit = max(1, min(100, int(sys.argv[1])))
+      limit = max(1, min(100, int(args[0])))
     except ValueError:
       limit = 25
 
@@ -119,6 +168,13 @@ def main():
     running = status_exit == 0 and status_output != "" and not stopped
 
   used, files = scan_dropbox(account_path, limit) if authenticated else (0, [])
+  space = account_space(app_key) if authenticated else {"spaceConnected": False, "spaceError": ""}
+  quota_source = "plan" if quota > 0 else ""
+  if space.get("allocated"):
+    # Account-wide numbers: the local scan misses selective-sync and online-only files.
+    used = space["used"]
+    quota = space["allocated"]
+    quota_source = "api"
   usage_percent = (used / quota * 100) if quota > 0 else 0
 
   print(json.dumps({
@@ -133,6 +189,10 @@ def main():
     "quotaBytes": quota,
     "usagePercent": usage_percent,
     "quotaKnown": quota > 0,
+    "quotaSource": quota_source,
+    "spaceApiConfigured": bool(app_key),
+    "spaceConnected": space["spaceConnected"],
+    "spaceError": space["spaceError"],
     "files": files,
   }))
 

@@ -172,6 +172,8 @@ Panel {
     function refresh(): string { dropbox.refresh(); return "ok" }
     function login(): string { dropbox.login(); return "ok" }
     function status(): string { return dropbox.statusText }
+    function connectQuota(): string { dropbox.connectSpace(); return "ok" }
+    function disconnectQuota(): string { dropbox.disconnectSpace(); return "ok" }
   }
 
   BarIconButton {
@@ -318,6 +320,31 @@ Panel {
               width: parent.width
               spacing: Style.spacing.labelGap
               InfoPair { label: Commons.I18n.t("dropbox.stored"); value: Model.usageText(dropbox.usedBytes, dropbox.quotaBytes, dropbox.quotaKnown, Commons.I18n.t, Commons.I18n.formatNumber) }
+
+              // Where the quota came from, and the way to the real one when
+              // it is only the plan's base allocation.
+              Text {
+                id: quotaNote
+                readonly property bool canConnect: dropbox.spaceApiConfigured && !dropbox.spaceConnected && !dropbox.spaceAuthorizing
+                visible: text !== ""
+                width: parent.width
+                textFormat: Text.PlainText
+                wrapMode: Text.WordWrap
+                text: Model.quotaNote(dropbox.quotaSource, dropbox.spaceApiConfigured, dropbox.spaceConnected, dropbox.spaceError, Commons.I18n.t)
+                color: quotaMouse.containsMouse && canConnect ? root.foreground : root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.underline: canConnect
+
+                MouseArea {
+                  id: quotaMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  enabled: quotaNote.canConnect
+                  cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                  onClicked: dropbox.connectSpace()
+                }
+              }
             }
           }
 

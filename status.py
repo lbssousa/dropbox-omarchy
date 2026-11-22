@@ -60,10 +60,14 @@ def scan_dropbox(path, limit):
   total = 0
   counter = 0
   recent = []
+  internal_names = {".dropbox", ".dropbox.cache"}
   try:
     for root, dirs, files in os.walk(path):
-      dirs[:] = [name for name in dirs if not os.path.islink(os.path.join(root, name))]
+      # Internal metadata and staged downloads are not account files or stored usage.
+      dirs[:] = [name for name in dirs if not (root == path and name in internal_names) and not os.path.islink(os.path.join(root, name))]
       for name in files:
+        if root == path and name in internal_names:
+          continue
         file_path = os.path.join(root, name)
         if os.path.islink(file_path):
           continue
@@ -167,8 +171,13 @@ def main():
     stopped = "not running" in lowered or "isn't running" in lowered or lowered == "stopped"
     running = status_exit == 0 and status_output != "" and not stopped
 
-  used, files = scan_dropbox(account_path, limit) if authenticated else (0, [])
-  space = account_space(app_key) if authenticated else {"spaceConnected": False, "spaceError": ""}
+  status_only = "--status-only" in args
+  used, files = scan_dropbox(account_path, limit) if authenticated and not status_only else (0, [])
+  # A status-only poll leaves the API alone; the panel keeps the last numbers.
+  if authenticated and not status_only:
+    space = account_space(app_key)
+  else:
+    space = {"spaceConnected": False, "spaceError": ""}
   quota_source = "plan" if quota > 0 else ""
   if space.get("allocated"):
     # Account-wide numbers: the local scan misses selective-sync and online-only files.
@@ -179,6 +188,7 @@ def main():
 
   print(json.dumps({
     "ok": True,
+    "statusOnly": status_only,
     "installed": dropbox_cli is not None,
     "running": running,
     "authenticated": authenticated,

@@ -61,6 +61,8 @@ Item {
   property bool _authUrlOpened: false
 
   onAppKeyChanged: delayedRefresh.restart()
+  // Opening the panel is what brings the stored bytes and recent files up to date.
+  onPanelOpenChanged: if (panelOpen) refresh()
 
   function setting(name, fallback) {
     var value = settings ? settings[name] : undefined
@@ -75,19 +77,25 @@ Item {
     return n
   }
 
+  // A full refresh walks the whole Dropbox folder (stored bytes, recent files)
+  // and asks the Dropbox API for the quota. Only the panel shows those, so with
+  // it closed every refresh is status-only: the bar icon needs no more than
+  // running, linked and syncing. Otherwise a large folder pins a core for
+  // seconds on every background poll, once per monitor's bar (omacom/omarchy#19848).
   function refresh(statusOnly) {
+    var full = statusOnly !== true && panelOpen
     if (statusProcess.running) {
-      if (statusOnly !== true) _fullRefreshPending = true
+      if (full) _fullRefreshPending = true
       return
     }
     if (helperPath === "") return
-    if (statusOnly !== true) _fullRefreshPending = false
+    if (full) _fullRefreshPending = false
     _statusOutput = ""
     _statusError = ""
     refreshing = true
-    // A status-only poll (every 2 s while the panel is open) skips the file
-    // scan and the Dropbox API, so it never spends the account's API calls.
-    statusProcess.command = statusOnly === true
+    // A status-only poll skips the file scan and the Dropbox API, so it never
+    // spends the account's API calls; the panel keeps the last numbers.
+    statusProcess.command = !full
       ? ["python3", helperPath, "25", "--status-only"]
       : ["python3", helperPath, "25", "--app-key", appKey]
     statusProcess.running = true

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "lbssousa.dropbox",
   "name": "My Dropbox",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "author": "Laércio de Sousa",
   "license": "MIT",
   "description": "Dropbox status, real account storage quota, login, and recent synced files in the Omarchy bar.",
